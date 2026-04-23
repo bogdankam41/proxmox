@@ -1,0 +1,78 @@
+---
+- name: Create data directory
+  ansible.builtin.file:
+    path: /opt/AdGuardHome/data
+    state: directory
+    mode: '0755'
+
+- name: Prepare networking (Fix resolv.conf)
+  ansible.builtin.copy:
+    content: "nameserver 1.1.1.1"
+    dest: /etc/resolv.conf
+    mode: '0644'
+
+- name: Install dependencies
+  ansible.builtin.apt:
+    name:
+      - curl
+      - tar
+    state: present
+    update_cache: yes
+
+- name: Download and unarchive AdGuard Home
+  ansible.builtin.unarchive:
+    src: https://static.adtidy.org/adguardhome/release/AdGuardHome_linux_amd64.tar.gz
+    dest: /opt/
+    remote_src: yes
+    creates: /opt/AdGuardHome/AdGuardHome
+
+- name: Deploy AdGuard configuration from template
+  ansible.builtin.template:
+    src: AdGuardHome.yaml.j2
+    dest: /opt/AdGuardHome/AdGuardHome.yaml
+    mode: '0644'
+  notify: restart adguard
+
+- name: Install AdGuard Home as a service
+  ansible.builtin.command:
+    cmd: ./AdGuardHome -s install
+    chdir: /opt/AdGuardHome
+    creates: /etc/systemd/system/AdGuardHome.service
+
+- name: Configure systemd-resolved to release port 53
+  block:
+    - name: Create resolved.conf.d directory
+      ansible.builtin.file:
+        path: /etc/systemd/resolved.conf.d
+        state: directory
+        mode: '0755'
+
+    - name: Disable DNSStubListener
+      ansible.builtin.copy:
+        dest: /etc/systemd/resolved.conf.d/adguardhome.conf
+        content: |
+          [Resolve]
+          DNS=127.0.0.1
+          DNSStubListener=no
+        mode: '0644'
+
+    - name: Backup and link resolv.conf
+      ansible.builtin.shell: |
+        rm -f /etc/resolv.conf
+        ln -s /run/systemd/resolve/resolv.conf /etc/resolv.conf
+      args:
+        creates: /run/systemd/resolve/resolv.conf
+
+  notify: 
+    - restart resolved
+    - restart adguard
+
+- name: Ensure services are started and enabled
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: yes
+    daemon_reload: yes
+  loop:
+    - systemd-resolved
+    - AdGuardHome
