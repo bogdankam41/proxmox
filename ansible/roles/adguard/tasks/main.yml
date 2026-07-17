@@ -1,15 +1,17 @@
 ---
-- name: Create data directory
-  ansible.builtin.file:
-    path: /opt/AdGuardHome/data
-    state: directory
-    mode: '0755'
-
 - name: Prepare networking (Fix resolv.conf)
   ansible.builtin.copy:
-    content: "nameserver 1.1.1.1"
+    content: "nameserver {{ bootstrap_dns | default('1.1.1.1') }}\n"
     dest: /etc/resolv.conf
     mode: '0644'
+
+- name: Wait for outbound DNS/network readiness
+  ansible.builtin.command: getent hosts raw.githubusercontent.com
+  register: dns_ready
+  until: dns_ready.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
 
 - name: Install dependencies
   ansible.builtin.apt:
@@ -18,13 +20,36 @@
       - tar
     state: present
     update_cache: yes
+  register: apt_deps
+  until: apt_deps is succeeded
+  retries: 5
+  delay: 10
 
-- name: Download and unarchive AdGuard Home
-  ansible.builtin.unarchive:
-    src: https://static.adtidy.org/adguardhome/release/AdGuardHome_linux_amd64.tar.gz
-    dest: /opt/
-    remote_src: yes
-    creates: /opt/AdGuardHome/AdGuardHome
+- name: Check installed AdGuard Home version
+  ansible.builtin.command: /opt/AdGuardHome/AdGuardHome --version
+  register: agh_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade AdGuard Home to {{ adguard_version }}
+  when: adguard_version not in (agh_installed.stdout | default(''))
+  block:
+    - name: Stop AdGuardHome before replacing the binary
+      ansible.builtin.systemd:
+        name: AdGuardHome
+        state: stopped
+      failed_when: false
+
+    - name: Download and unarchive pinned AdGuard Home release
+      ansible.builtin.unarchive:
+        src: "https://github.com/AdguardTeam/AdGuardHome/releases/download/{{ adguard_version }}/AdGuardHome_linux_amd64.tar.gz"
+        dest: /opt/
+        remote_src: yes
+      register: agh_download
+      until: agh_download is succeeded
+      retries: 5
+      delay: 10
+      notify: restart adguard
 
 - name: Deploy AdGuard configuration from template
   ansible.builtin.template:
