@@ -1,0 +1,22 @@
+# Copy to terraform.tfvars and fill in real values. terraform.tfvars is gitignored.
+# Node: pve (home) — LAN 192.168.1.0/24, AdGuard container 192.168.1.2
+
+# Path to the PRIVATE SSH key that can reach the container as root.
+ssh_key_path = "~/.ssh/private-key-ed25519"
+
+# Bcrypt hash of the AdGuard Home web-UI password (NOT the plaintext password).
+# Generate with: htpasswd -B -n -b bogdan 'yourpassword'  (use the part after "bogdan:")
+adguard_password_hash = "REPLACE_WITH_BCRYPT_HASH"
+
+# Proxmox credentials. Prefer an API token over the root password — see README "Secrets".
+proxmox_user     = "root@pam"
+proxmox_password = "REPLACE_WITH_PROXMOX_PASSWORD_OR_TOKEN_SECRET"
+
+# Per-node AdGuard clients (devices in THIS apartment).
+adguard_clients = [
+  {
+    name = "Example device"
+    ids  = ["192.168.1.39"]
+    tags = ["device_phone"]
+  },
+]

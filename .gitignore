@@ -1,12 +1,17 @@
 # Terraform
 .terraform/
 *.tfstate
-*.tfstate.backup
+*.tfstate.*
+crash.log
+
+# Secrets — real tfvars are never committed, examples are
 *.tfvars
-.terraform.lock.hcl
+!*.tfvars.example
 
 # Ansible
 *.retry
 
 # OS files
 .DS_Store
+
+# Note: .terraform.lock.hcl is intentionally committed (pins provider versions).
