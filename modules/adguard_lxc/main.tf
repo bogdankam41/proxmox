@@ -14,6 +14,16 @@ resource "proxmox_virtual_environment_container" "adguard_home" {
       }
     }
 
+    # Second (guest) NIC ip_config — order must match the network_interface blocks below. No gateway.
+    dynamic "ip_config" {
+      for_each = var.guest_interface != null ? [var.guest_interface] : []
+      content {
+        ipv4 {
+          address = "${ip_config.value.ip}/${ip_config.value.cidr}"
+        }
+      }
+    }
+
     user_account {
       keys = var.ssh_public_keys
     }
@@ -23,6 +33,17 @@ resource "proxmox_virtual_environment_container" "adguard_home" {
     name        = "eth0"
     bridge      = var.network_bridge
     mac_address = var.mac_address # pinned so router MAC-based policy/reservation survives recreation
+  }
+
+  dynamic "network_interface" {
+    for_each = var.guest_interface != null ? [var.guest_interface] : []
+    content {
+      name        = network_interface.value.name
+      bridge      = network_interface.value.bridge
+      vlan_id     = network_interface.value.vlan_id
+      firewall    = network_interface.value.firewall
+      mac_address = network_interface.value.mac_address
+    }
   }
 
   features {
@@ -83,6 +104,6 @@ resource "terraform_data" "provision" {
 })}' \
         ${path.module}/../../ansible/playbook.yml
     EOT
-  }
+}
 }
 

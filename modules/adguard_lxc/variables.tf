@@ -92,3 +92,17 @@ variable "mac_address" {
   description = "Fixed MAC for the container's eth0 (keeps router DHCP reservation/policy stable). null = provider-generated."
   default     = null
 }
+
+variable "guest_interface" {
+  description = "Optional second NIC (e.g. a guest network that only needs DNS). null = single-NIC container. No gateway — the primary interface holds the default route."
+  type = object({
+    name        = string
+    ip          = string
+    cidr        = optional(number, 24)
+    bridge      = optional(string, "vmbr0")
+    vlan_id     = optional(number)
+    firewall    = optional(bool, false)
+    mac_address = optional(string)
+  })
+  default = null
+}

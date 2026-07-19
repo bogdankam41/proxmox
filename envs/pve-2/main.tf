@@ -6,8 +6,20 @@ module "adguard_home" {
 
   proxmox_node = "pve-2"
   container_id = 100
-  container_ip = "192.168.2.2"
+  container_ip = "192.168.2.2" # home network (trusted); holds the default route
   gateway_ip   = "192.168.2.1"
+  mac_address  = "BC:24:11:3C:70:48" # reserved on the router
+
+  # Second NIC: guest network — devices that only need DNS, no home-network access.
+  guest_interface = {
+    name        = "net-guest"
+    ip          = "192.168.3.2"
+    cidr        = 24
+    bridge      = "vmbr0"
+    vlan_id     = 2
+    firewall    = true
+    mac_address = "BC:24:11:E1:8D:0A"
+  }
 
   ssh_key_path    = var.ssh_key_path
   ssh_public_keys = var.ssh_public_keys
