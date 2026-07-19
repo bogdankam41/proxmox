@@ -11,7 +11,13 @@ terraform {
 
 provider "proxmox" {
   endpoint = "https://192.168.2.10:8006/"
-  username = var.proxmox_user
-  password = var.proxmox_password
-  insecure = true # self-signed Proxmox certificate on the LAN
+  # API-token auth: proxmox_user holds "user@realm!tokenid", proxmox_password holds the token secret.
+  api_token = "${var.proxmox_user}=${var.proxmox_password}"
+  insecure  = true # self-signed Proxmox certificate on the LAN
+
+  # bpg/proxmox uses SSH to the node for some node-level operations.
+  ssh {
+    username    = "root"
+    private_key = file(pathexpand(var.ssh_key_path))
+  }
 }
