@@ -5,6 +5,20 @@
     dest: /etc/resolv.conf
     mode: '0644'
 
+# The container has no global IPv6, but many hosts (e.g. archive.ubuntu.com)
+# resolve to AAAA too; getaddrinfo would prefer IPv6 and apt/curl hang. Prefer IPv4.
+- name: Prefer IPv4 in getaddrinfo (gai.conf)
+  ansible.builtin.copy:
+    content: "precedence ::ffff:0:0/96  100\n"
+    dest: /etc/gai.conf
+    mode: '0644'
+
+- name: Force apt to use IPv4
+  ansible.builtin.copy:
+    content: "Acquire::ForceIPv4 \"true\";\n"
+    dest: /etc/apt/apt.conf.d/99force-ipv4
+    mode: '0644'
+
 - name: Wait for outbound DNS/network readiness
   ansible.builtin.command: getent hosts raw.githubusercontent.com
   register: dns_ready
