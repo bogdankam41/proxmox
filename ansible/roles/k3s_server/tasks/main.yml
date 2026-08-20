@@ -1,0 +1,93 @@
+---
+- name: Build the k3s server command line
+  ansible.builtin.set_fact:
+    # --tls-san keeps the kubeconfig valid when talking to the node by IP.
+    k3s_server_exec: >-
+      server --write-kubeconfig-mode 644
+      --node-ip {{ ansible_host }}
+      --tls-san {{ ansible_host }}
+      {{ k3s_server_args | join(' ') }}
+
+- name: Compute the install signature
+  ansible.builtin.set_fact:
+    k3s_signature: "{{ (k3s_install_env | to_json ~ '|' ~ k3s_server_exec) | hash('sha1') }}"
+
+- name: Check the recorded install signature
+  ansible.builtin.slurp:
+    src: /etc/k3s-install.signature
+  register: k3s_recorded_signature
+  failed_when: false
+
+# Re-runs only when the version/channel or the server flags actually change;
+# the installer is safe to re-run and just rewrites the systemd unit.
+- name: Install or reconfigure the k3s server
+  when: (k3s_recorded_signature.content | default('') | b64decode | trim) != k3s_signature
+  block:
+    - name: Run the k3s installer in server mode
+      ansible.builtin.command: /usr/local/bin/k3s-install.sh
+      environment: "{{ k3s_install_env | combine({'INSTALL_K3S_EXEC': k3s_server_exec}) }}"
+      changed_when: yes
+
+    - name: Record the install signature
+      ansible.builtin.copy:
+        content: "{{ k3s_signature }}\n"
+        dest: /etc/k3s-install.signature
+        mode: '0644'
+
+- name: Ensure the k3s server is running
+  ansible.builtin.systemd:
+    name: k3s
+    state: started
+    enabled: yes
+
+- name: Wait for the Kubernetes API to become ready
+  ansible.builtin.command: k3s kubectl get --raw=/readyz
+  register: k3s_readyz
+  until: k3s_readyz.rc == 0
+  retries: 30
+  delay: 5
+  changed_when: false
+
+- name: Read the node join token
+  ansible.builtin.slurp:
+    src: /var/lib/rancher/k3s/server/node-token
+  register: k3s_node_token_raw
+
+# Consumed by the agents through hostvars.
+- name: Expose the join token to the agent play
+  ansible.builtin.set_fact:
+    k3s_node_token: "{{ k3s_node_token_raw.content | b64decode | trim }}"
+  no_log: yes
+
+- name: Fetch the kubeconfig to the machine running Ansible
+  when: kubeconfig_local_path | default('') | length > 0
+  block:
+    - name: Read the kubeconfig from the master
+      ansible.builtin.slurp:
+        src: /etc/rancher/k3s/k3s.yaml
+      register: k3s_kubeconfig_raw
+
+    - name: Ensure the local kubeconfig directory exists
+      ansible.builtin.file:
+        path: "{{ kubeconfig_local_path | expanduser | dirname }}"
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+      become: no
+
+    # Point the kubeconfig at the master's LAN IP instead of 127.0.0.1 and give
+    # the cluster/user/context a name that will not collide with other clusters.
+    - name: Write the kubeconfig locally
+      ansible.builtin.copy:
+        content: >-
+          {{ k3s_kubeconfig_raw.content | b64decode
+             | replace('https://127.0.0.1:6443', 'https://' ~ ansible_host ~ ':6443')
+             | regex_replace('(?m)^(\s*-?\s*)name: default$', '\1name: ' ~ kubeconfig_context_name)
+             | regex_replace('(?m)^(\s*)cluster: default$', '\1cluster: ' ~ kubeconfig_context_name)
+             | regex_replace('(?m)^(\s*)user: default$', '\1user: ' ~ kubeconfig_context_name)
+             | regex_replace('(?m)^current-context: default$', 'current-context: ' ~ kubeconfig_context_name) }}
+        dest: "{{ kubeconfig_local_path | expanduser }}"
+        mode: '0600'
+      delegate_to: localhost
+      become: no
+      no_log: yes

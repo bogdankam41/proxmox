@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars and fill in real values. terraform.tfvars is gitignored.
+# Cluster: k3s on node pve — master 192.168.1.30, workers .31 / .32
+
+# Proxmox API token: user part in proxmox_user, secret in proxmox_password.
+proxmox_user     = "terraform@pve!terraform"
+proxmox_password = "REPLACE_WITH_API_TOKEN_SECRET"
+
+# Private key that can log into the cloud-init user on the VMs.
+ssh_key_path = "~/.ssh/private-key-ed25519"
+
+# k3s version: leave the channel for the latest stable, or pin an exact version.
+k3s_channel = "stable"
+# k3s_version = "v1.31.5+k3s1"
+
+kubeconfig_local_path = "~/.kube/homelab-k3s"
