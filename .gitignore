@@ -15,3 +15,6 @@ crash.log
 .DS_Store
 
 # Note: .terraform.lock.hcl is intentionally committed (pins provider versions).
+
+# Claude folder
+.claude/
