@@ -1,0 +1,45 @@
+---
+- name: Locate the control-plane host
+  ansible.builtin.set_fact:
+    k3s_master_host: "{{ groups['k3s_master'] | first }}"
+
+- name: Build the k3s agent command line
+  ansible.builtin.set_fact:
+    k3s_agent_exec: >-
+      agent --node-ip {{ ansible_host }}
+      {{ k3s_agent_args | join(' ') }}
+    k3s_server_url: "https://{{ hostvars[k3s_master_host].ansible_host }}:6443"
+
+- name: Compute the install signature
+  ansible.builtin.set_fact:
+    k3s_signature: "{{ (k3s_install_env | to_json ~ '|' ~ k3s_agent_exec ~ '|' ~ k3s_server_url) | hash('sha1') }}"
+
+- name: Check the recorded install signature
+  ansible.builtin.slurp:
+    src: /etc/k3s-install.signature
+  register: k3s_recorded_signature
+  failed_when: false
+
+- name: Install or reconfigure the k3s agent
+  when: (k3s_recorded_signature.content | default('') | b64decode | trim) != k3s_signature
+  block:
+    - name: Run the k3s installer in agent mode
+      ansible.builtin.command: /usr/local/bin/k3s-install.sh
+      environment: "{{ k3s_install_env | combine({
+        'INSTALL_K3S_EXEC': k3s_agent_exec,
+        'K3S_URL': k3s_server_url,
+        'K3S_TOKEN': hostvars[k3s_master_host].k3s_node_token }) }}"
+      changed_when: yes
+      no_log: yes
+
+    - name: Record the install signature
+      ansible.builtin.copy:
+        content: "{{ k3s_signature }}\n"
+        dest: /etc/k3s-install.signature
+        mode: '0644'
+
+- name: Ensure the k3s agent is running
+  ansible.builtin.systemd:
+    name: k3s-agent
+    state: started
+    enabled: yes

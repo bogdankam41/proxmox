@@ -1,0 +1,87 @@
+---
+# The VMs have no global IPv6, but many hosts resolve to AAAA as well;
+# getaddrinfo would prefer IPv6 and apt/curl hang. Same fix as the AdGuard LXC.
+- name: Prefer IPv4 in getaddrinfo (gai.conf)
+  ansible.builtin.copy:
+    content: "precedence ::ffff:0:0/96  100\n"
+    dest: /etc/gai.conf
+    mode: '0644'
+
+- name: Force apt to use IPv4
+  ansible.builtin.copy:
+    content: "Acquire::ForceIPv4 \"true\";\n"
+    dest: /etc/apt/apt.conf.d/99force-ipv4
+    mode: '0644'
+
+- name: Wait for outbound DNS/network readiness
+  ansible.builtin.command: getent hosts get.k3s.io
+  register: dns_ready
+  until: dns_ready.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - qemu-guest-agent
+    state: present
+    update_cache: yes
+  register: apt_base
+  until: apt_base is succeeded
+  retries: 5
+  delay: 10
+
+# The unit is bound to the virtio channel Proxmox only attaches when the VM has
+# agent=1 (module var qemu_agent_enabled). Without it, starting the service fails.
+- name: Check for the QEMU guest-agent virtio channel
+  ansible.builtin.stat:
+    path: /dev/virtio-ports/org.qemu.guest_agent.0
+  register: qga_channel
+
+# Enabled either way: once the channel appears (agent flipped on + VM restart),
+# udev starts the service by itself.
+- name: Enable qemu-guest-agent
+  ansible.builtin.systemd:
+    name: qemu-guest-agent
+    enabled: yes
+    state: "{{ 'started' if qga_channel.stat.exists else omit }}"
+
+- name: Check for active swap
+  ansible.builtin.command: swapon --noheadings --show=NAME
+  register: active_swap
+  changed_when: false
+  failed_when: false
+
+# kubelet refuses to start with swap on unless explicitly told otherwise.
+- name: Disable swap
+  when: active_swap.stdout | trim | length > 0
+  block:
+    - name: Turn swap off now
+      ansible.builtin.command: swapoff -a
+      changed_when: yes
+
+    - name: Remove swap entries from fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#].*\sswap\s.*)$'
+        replace: '# \1'
+
+- name: Download the k3s installer
+  ansible.builtin.get_url:
+    url: https://get.k3s.io
+    dest: /usr/local/bin/k3s-install.sh
+    mode: '0755'
+  register: k3s_installer
+  until: k3s_installer is succeeded
+  retries: 5
+  delay: 10
+
+# Either pin an exact release or follow a channel — never both.
+- name: Build the k3s installer environment
+  ansible.builtin.set_fact:
+    k3s_install_env: >-
+      {{ {'INSTALL_K3S_VERSION': k3s_version}
+         if (k3s_version | default('') | length > 0)
+         else {'INSTALL_K3S_CHANNEL': k3s_channel} }}

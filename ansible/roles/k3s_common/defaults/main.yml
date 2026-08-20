@@ -1,0 +1,4 @@
+---
+# Follow a channel unless an exact version is pinned from Terraform.
+k3s_channel: stable
+k3s_version: ""

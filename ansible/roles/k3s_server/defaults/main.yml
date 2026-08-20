@@ -1,0 +1,5 @@
+---
+k3s_server_args: []
+# Empty = do not copy the kubeconfig off the master.
+kubeconfig_local_path: ""
+kubeconfig_context_name: homelab-k3s
