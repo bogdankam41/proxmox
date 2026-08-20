@@ -66,7 +66,7 @@ variable "os_template" {
 variable "adguard_version" {
   type        = string
   description = "Pinned AdGuard Home release tag to install (from GitHub Releases). Bump to upgrade, lower to roll back."
-  default     = "v0.107.78"
+  default     = "v0.107.79"
 }
 
 variable "disk_size" {
