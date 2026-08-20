@@ -36,7 +36,7 @@ module "k3s" {
   ]
 
   cpu_cores = 2
-  memory_mb = 1536
+  memory_mb = 2048
   disk_size = 20
 
   ssh_key_path    = var.ssh_key_path
