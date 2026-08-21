@@ -55,6 +55,11 @@ resource "proxmox_virtual_environment_container" "adguard_home" {
     type             = "ubuntu"
   }
 
+  memory {
+    dedicated = var.memory_mb
+    swap      = var.swap_mb
+  }
+
   disk {
     datastore_id = var.disk_datastore
     size         = var.disk_size

@@ -69,6 +69,18 @@ variable "adguard_version" {
   default     = "v0.107.79"
 }
 
+variable "memory_mb" {
+  type        = number
+  description = "RAM for the container in MiB. AdGuard Home idles around 150 MiB."
+  default     = 256
+}
+
+variable "swap_mb" {
+  type        = number
+  description = "Swap for the container in MiB."
+  default     = 512
+}
+
 variable "disk_size" {
   type        = number
   description = "Root disk size in GiB."
