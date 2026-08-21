@@ -10,22 +10,24 @@ variable "cluster_name" {
 }
 
 variable "master" {
-  description = "The single k3s server (control-plane) node."
+  description = "The single k3s server (control-plane) node. memory_mb overrides the cluster-wide default for this node only."
   type = object({
     name        = string
     vm_id       = number
     ip          = string
     mac_address = optional(string)
+    memory_mb   = optional(number)
   })
 }
 
 variable "workers" {
-  description = "k3s agent (worker) nodes."
+  description = "k3s agent (worker) nodes. memory_mb overrides the cluster-wide default per node."
   type = list(object({
     name        = string
     vm_id       = number
     ip          = string
     mac_address = optional(string)
+    memory_mb   = optional(number)
   }))
   default = []
 }
@@ -67,7 +69,7 @@ variable "cpu_type" {
 
 variable "memory_mb" {
   type        = number
-  description = "RAM per VM in MiB."
+  description = "Default RAM per VM in MiB; a node may override it with its own memory_mb."
   default     = 2048
 }
 

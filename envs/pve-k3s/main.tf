@@ -13,11 +13,13 @@ module "k3s" {
 
   # MACs are pinned: a new random MAC lands in the router's restricted profile
   # with no internet, which breaks the k3s install. Reserve these on the router.
+  # The control plane (API server, etcd/sqlite, scheduler) needs the most headroom.
   master = {
     name        = "k3s-master"
     vm_id       = 200
     ip          = "192.168.1.30"
     mac_address = "BC:24:11:A0:30:30"
+    memory_mb   = 2048
   }
 
   workers = [
@@ -26,16 +28,19 @@ module "k3s" {
       vm_id       = 201
       ip          = "192.168.1.31"
       mac_address = "BC:24:11:A0:30:31"
+      memory_mb   = 1536
     },
     {
       name        = "k3s-worker-2"
       vm_id       = 202
       ip          = "192.168.1.32"
       mac_address = "BC:24:11:A0:30:32"
+      memory_mb   = 1536
     },
   ]
 
   cpu_cores = 2
+  # Fallback for any node that does not set memory_mb itself.
   memory_mb = 2048
   disk_size = 20
 
