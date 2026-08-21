@@ -9,6 +9,7 @@ locals {
         vm_id       = var.master.vm_id
         ip          = var.master.ip
         mac_address = var.master.mac_address
+        memory_mb   = coalesce(var.master.memory_mb, var.memory_mb)
         role        = "server"
       }
     },
@@ -17,6 +18,7 @@ locals {
         vm_id       = w.vm_id
         ip          = w.ip
         mac_address = w.mac_address
+        memory_mb   = coalesce(w.memory_mb, var.memory_mb)
         role        = "agent"
       }
     },
@@ -72,7 +74,7 @@ resource "proxmox_virtual_environment_vm" "node" {
   }
 
   memory {
-    dedicated = var.memory_mb
+    dedicated = each.value.memory_mb
   }
 
   disk {
