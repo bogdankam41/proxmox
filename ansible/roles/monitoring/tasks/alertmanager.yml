@@ -1,0 +1,75 @@
+---
+- name: Create the alertmanager system user
+  ansible.builtin.user:
+    name: alertmanager
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+
+- name: Create the Alertmanager directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: alertmanager
+    group: alertmanager
+    mode: '0755'
+  loop:
+    - /etc/alertmanager
+    - /var/lib/alertmanager
+
+- name: Check the installed Alertmanager version
+  ansible.builtin.command: /usr/local/bin/alertmanager --version
+  register: alertmanager_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install Alertmanager {{ alertmanager_version }}
+  when: alertmanager_version not in (alertmanager_installed.stdout | default('') ~ alertmanager_installed.stderr | default(''))
+  block:
+    - name: Download and unpack the Alertmanager release
+      ansible.builtin.unarchive:
+        src: "https://github.com/prometheus/alertmanager/releases/download/v{{ alertmanager_version }}/alertmanager-{{ alertmanager_version }}.linux-amd64.tar.gz"
+        dest: /opt/
+        remote_src: yes
+      register: alertmanager_download
+      until: alertmanager_download is succeeded
+      retries: 5
+      delay: 10
+
+    - name: Put the Alertmanager binaries in place
+      ansible.builtin.copy:
+        src: "/opt/alertmanager-{{ alertmanager_version }}.linux-amd64/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        remote_src: yes
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - alertmanager
+        - amtool
+      notify: restart alertmanager
+
+# Holds the Telegram bot token when one is configured — keep it off world-read.
+- name: Deploy alertmanager.yml
+  ansible.builtin.template:
+    src: alertmanager.yml.j2
+    dest: /etc/alertmanager/alertmanager.yml
+    owner: alertmanager
+    group: alertmanager
+    mode: '0640'
+    validate: /usr/local/bin/amtool check-config %s
+  notify: reload alertmanager
+
+- name: Install the Alertmanager systemd unit
+  ansible.builtin.template:
+    src: alertmanager.service.j2
+    dest: /etc/systemd/system/alertmanager.service
+    mode: '0644'
+  notify: restart alertmanager
+
+- name: Ensure Alertmanager is started and enabled
+  ansible.builtin.systemd:
+    name: alertmanager
+    state: started
+    enabled: yes
+    daemon_reload: yes

@@ -1,0 +1,128 @@
+---
+- name: Create the apt keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Fetch the Grafana apt signing key
+  ansible.builtin.get_url:
+    url: https://apt.grafana.com/gpg.key
+    dest: /etc/apt/keyrings/grafana.asc
+    mode: '0644'
+  register: grafana_key
+  until: grafana_key is succeeded
+  retries: 5
+  delay: 10
+
+- name: Add the Grafana apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main"
+    filename: grafana
+    state: present
+    update_cache: yes
+
+- name: Install Grafana
+  ansible.builtin.apt:
+    name: "grafana{{ '=' ~ grafana_version if grafana_version | length > 0 else '' }}"
+    state: "{{ 'present' if grafana_version | length > 0 else 'latest' }}"
+  register: grafana_pkg
+  until: grafana_pkg is succeeded
+  retries: 5
+  delay: 10
+  notify: restart grafana
+
+- name: Configure grafana.ini
+  ansible.builtin.ini_file:
+    path: /etc/grafana/grafana.ini
+    section: "{{ item.section }}"
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    owner: root
+    group: grafana
+    mode: '0640'
+    no_extra_spaces: yes
+  loop:
+    - { section: server, option: http_port, value: "{{ grafana_listen_port }}" }
+    - { section: security, option: admin_user, value: "{{ grafana_admin_user }}" }
+    - { section: security, option: admin_password, value: "{{ grafana_admin_password }}" }
+    # Homelab LAN: no anonymous access, no phoning home.
+    - { section: "auth.anonymous", option: enabled, value: "false" }
+    - { section: analytics, option: reporting_enabled, value: "false" }
+    - { section: analytics, option: check_for_updates, value: "false" }
+  loop_control:
+    label: "{{ item.section }}.{{ item.option }}"
+  no_log: yes
+  notify: restart grafana
+
+- name: Create the Grafana provisioning directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: grafana
+    mode: '0750'
+  loop:
+    - /etc/grafana/provisioning/datasources
+    - /etc/grafana/provisioning/dashboards
+
+- name: Create the dashboard directory
+  ansible.builtin.file:
+    path: /var/lib/grafana/dashboards
+    state: directory
+    owner: grafana
+    group: grafana
+    mode: '0755'
+
+- name: Provision the Prometheus datasource
+  ansible.builtin.template:
+    src: grafana-datasource.yml.j2
+    dest: /etc/grafana/provisioning/datasources/prometheus.yml
+    owner: root
+    group: grafana
+    mode: '0640'
+  notify: restart grafana
+
+- name: Provision the dashboard folder
+  ansible.builtin.template:
+    src: grafana-dashboards.yml.j2
+    dest: /etc/grafana/provisioning/dashboards/homelab.yml
+    owner: root
+    group: grafana
+    mode: '0640'
+  notify: restart grafana
+
+# Dashboards come from grafana.com; add or drop them via grafana_dashboards.
+- name: Download the provisioned dashboards
+  ansible.builtin.get_url:
+    url: "https://grafana.com/api/dashboards/{{ item.gnet_id }}/revisions/{{ item.revision }}/download"
+    dest: "/var/lib/grafana/dashboards/{{ item.name }}.json"
+    owner: grafana
+    group: grafana
+    mode: '0644'
+  loop: "{{ grafana_dashboards }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: grafana_dashboard_download
+  until: grafana_dashboard_download is succeeded
+  retries: 3
+  delay: 10
+
+# Downloaded dashboards reference an input placeholder instead of a real
+# datasource; point them at the one provisioned above.
+- name: Bind the dashboards to the Prometheus datasource
+  ansible.builtin.replace:
+    path: "/var/lib/grafana/dashboards/{{ item.name }}.json"
+    regexp: '\$\{DS_[A-Z0-9_ -]+\}'
+    replace: "{{ grafana_datasource_uid }}"
+  loop: "{{ grafana_dashboards }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: restart grafana
+
+- name: Ensure Grafana is started and enabled
+  ansible.builtin.systemd:
+    name: grafana-server
+    state: started
+    enabled: yes
+    daemon_reload: yes

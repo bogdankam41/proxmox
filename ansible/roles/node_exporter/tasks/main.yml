@@ -1,0 +1,52 @@
+---
+- name: Create the node_exporter system user
+  ansible.builtin.user:
+    name: "{{ node_exporter_user }}"
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+
+- name: Check the installed node_exporter version
+  ansible.builtin.command: /usr/local/bin/node_exporter --version
+  register: node_exporter_installed
+  changed_when: false
+  failed_when: false
+
+# Same pattern as the AdGuard role: the binary is only touched when the pinned
+# version actually differs from what is on disk.
+- name: Install node_exporter {{ node_exporter_version }}
+  when: node_exporter_version not in (node_exporter_installed.stderr | default('') ~ node_exporter_installed.stdout | default(''))
+  block:
+    - name: Download and unpack the node_exporter release
+      ansible.builtin.unarchive:
+        src: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: /opt/
+        remote_src: yes
+      register: node_exporter_download
+      until: node_exporter_download is succeeded
+      retries: 5
+      delay: 10
+
+    - name: Put the node_exporter binary in place
+      ansible.builtin.copy:
+        src: "/opt/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+        dest: /usr/local/bin/node_exporter
+        remote_src: yes
+        owner: root
+        group: root
+        mode: '0755'
+      notify: restart node_exporter
+
+- name: Install the node_exporter systemd unit
+  ansible.builtin.template:
+    src: node_exporter.service.j2
+    dest: /etc/systemd/system/node_exporter.service
+    mode: '0644'
+  notify: restart node_exporter
+
+- name: Ensure node_exporter is started and enabled
+  ansible.builtin.systemd:
+    name: node_exporter
+    state: started
+    enabled: yes
+    daemon_reload: yes

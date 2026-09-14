@@ -3,7 +3,8 @@
 Terraform + Ansible для домашней инфраструктуры на Proxmox:
 
 - **AdGuard Home** в LXC-контейнере на **двух** нодах (`envs/pve`, `envs/pve-2`);
-- **k3s-кластер** (1 мастер + 2 воркера) на ноде `pve` (`envs/pve-k3s`) — см. раздел [☸️ k3s-кластер](#️-k3s-кластер).
+- **k3s-кластер** (1 мастер + 2 воркера) на ноде `pve` (`envs/pve-k3s`) — см. раздел [☸️ k3s-кластер](#️-k3s-кластер);
+- **стек мониторинга** (Prometheus + Alertmanager + Grafana) на ноде `pve` (`envs/pve-monitoring`) — см. раздел [📈 Мониторинг](#-мониторинг).
 
 AdGuard: автоматизированное развёртывание в LXC-контейнере на двух Proxmox-нодах. Обе ноды описываются одним модулем и одной ролью Ansible; различаются только данными (клиенты, IP, секреты) в своих `terraform.tfvars`.
 
@@ -46,6 +47,10 @@ proxmox/
 │   ├── roles/k3s_common/          # подготовка нод (IPv4-preference, swap, guest-agent)
 │   ├── roles/k3s_server/          # мастер + выгрузка kubeconfig на Mac
 │   ├── roles/k3s_agent/           # воркеры (join по токену мастера)
+│   ├── monitoring.yml             # плейбук стека мониторинга
+│   ├── roles/monitoring/          # Prometheus + Alertmanager + Grafana
+│   ├── node_exporter.yml          # поставить экспортер на любое устройство
+│   ├── roles/node_exporter/       # node_exporter + systemd-юнит
 │   └── inventory/                 # (gitignored) inventory генерирует Terraform
 ├── modules/
 │   ├── adguard_lxc/               # ЕДИНЫЙ модуль: LXC-контейнер + запуск Ansible
@@ -53,7 +58,8 @@ proxmox/
 │   │   ├── variables.tf
 │   │   ├── outputs.tf
 │   │   └── versions.tf
-│   └── k3s_cluster/               # QEMU-ВМ из cloud-image + bootstrap k3s через Ansible
+│   ├── k3s_cluster/               # QEMU-ВМ из cloud-image + bootstrap k3s через Ansible
+│   └── monitoring_vm/             # одна QEMU-ВМ со стеком мониторинга
 └── envs/                          # окружения = площадки (свой state у каждой)
     ├── pve/
     │   ├── main.tf                # вызов модуля с топологией ноды pve
@@ -63,7 +69,8 @@ proxmox/
     │   ├── terraform.tfvars.example
     │   └── terraform.tfvars       # (gitignored) реальные секреты + клиенты pve
     ├── pve-2/                      # то же самое для pve-2
-    └── pve-k3s/                    # k3s-кластер на ноде pve (отдельный state)
+    ├── pve-k3s/                    # k3s-кластер на ноде pve (отдельный state)
+    └── pve-monitoring/             # стек мониторинга на ноде pve (отдельный state)
 ```
 
 **Принцип:** логика и структура конфига — общие (модуль + роль). Различия между квартирами — это *данные* в `terraform.tfvars` каждого окружения. Список клиентов у `pve` и `pve-2` разный и таким и должен быть.
@@ -175,3 +182,130 @@ kubectl get nodes -o wide
 - Правки в ролях `k3s_*` или в плейбуке → повторный `tofu apply` перезапускает Ansible **без** пересоздания ВМ.
 - Изменение RAM/CPU — это in-place update конфига ВМ: Ansible не перезапускается, но QEMU видит новый объём только после stop/start (провайдер перезапускает сам, иначе `qm reboot <vmid>`). Делать по одной ноде, чтобы поды успевали переезжать.
 - Снести кластер целиком: `tofu destroy` в `envs/pve-k3s` (на AdGuard это не влияет — у окружений отдельные state).
+
+---
+
+## 📈 Мониторинг
+
+Одна ВМ на ноде `pve` со всем стеком: **Prometheus** (сбор + правила алертов), **Alertmanager** (доставка), **Grafana** (дашборды) и **node_exporter** (метрики самой ВМ).
+
+| Параметр   | Значение                              |
+| ---------- | ------------------------------------- |
+| VMID       | `210`                                 |
+| IP         | `192.168.1.40`                        |
+| MAC        | `BC:24:11:A0:30:40`                   |
+| RAM / vCPU | 2048 MB / 2                           |
+| Диск       | 32 GB (на нём лежит TSDB Prometheus)  |
+| Grafana    | `http://192.168.1.40:3000`            |
+| Prometheus | `http://192.168.1.40:9090`            |
+| Alertmanager | `http://192.168.1.40:9093`          |
+
+### ➕ Добавить новое устройство
+
+Ровно как клиенты AdGuard: правится **только** `terraform.tfvars`, `.tf`-файлы и шаблоны трогать не нужно.
+
+1. Поставить на устройство экспортер — плейбук [`ansible/node_exporter.yml`](ansible/node_exporter.yml) ставит `node_exporter` на любой Linux-хост (бинарь из GitHub-релиза + systemd-юнит, слушает `:9100`). Запускается из корня репозитория:
+
+   ```bash
+   # k3s-ноды — через inventory, сгенерированный Terraform
+   ansible-playbook -i ansible/inventory/k3s.ini ansible/node_exporter.yml
+
+   # нода Proxmox (Debian, вход root)
+   ansible-playbook -i '192.168.1.10,' -u root \
+     --private-key ~/.ssh/private-key-ed25519 ansible/node_exporter.yml
+
+   # LXC с AdGuard (вход root)
+   ansible-playbook -i '192.168.1.2,' -u root \
+     --private-key ~/.ssh/private-key-ed25519 ansible/node_exporter.yml
+
+   # произвольный хост с обычным пользователем и sudo
+   ansible-playbook -i '192.168.1.50,' -u ubuntu \
+     --private-key ~/.ssh/private-key-ed25519 ansible/node_exporter.yml
+   ```
+
+   Плейбук идемпотентен: повторный запуск ничего не меняет, а смена `node_exporter_version` переустанавливает бинарь. Проверить: `curl -s http://<ip>:9100/metrics | head`.
+
+2. Добавить его в `monitoring_targets` в `envs/pve-monitoring/terraform.tfvars`:
+
+   ```hcl
+   monitoring_targets = [
+     { name = "pve",    address = "192.168.1.10:9100", labels = { role = "hypervisor" } },
+     { name = "nas",    address = "192.168.1.50:9100" },
+     # устройство со своим экспортером — в отдельный job:
+     { name = "router", address = "192.168.1.1:9100", job = "network" },
+   ]
+   ```
+
+   | Поле      | Обязательно | Смысл                                                    |
+   | --------- | ----------- | -------------------------------------------------------- |
+   | `name`    | да          | имя в Grafana и в тексте алертов                          |
+   | `address` | да          | `host:port` экспортера (`node_exporter` слушает `:9100`)  |
+   | `job`     | нет         | scrape job; по умолчанию `node`                           |
+   | `labels`  | нет         | дополнительные метки (`{ role = "k3s" }`)                 |
+
+3. `tofu apply` — Terraform перезапустит Ansible, ВМ **не** пересоздаётся.
+
+Проверить результат: `http://192.168.1.40:9090/targets` — все цели должны быть `UP`. Цель в состоянии `DOWN` обычно значит, что на устройстве не поднят экспортер (шаг 1) или порт закрыт файрволом.
+
+Устройства одного job лежат в отдельном файле `/etc/prometheus/targets/<job>.json` (file_sd), поэтому добавление устройства в существующий job Prometheus подхватывает сам, даже без перезагрузки конфига. Новый `job` добавляет scrape-конфиг в `prometheus.yml` → роль шлёт Prometheus SIGHUP (reload, без простоя).
+
+### 🔔 Алерты
+
+Встроенные правила: `InstanceDown` (цель не отвечает 5 мин), `HighCpuUsage`, `HighMemoryUsage`, `LowDiskSpace`. Пороги правятся из tfvars:
+
+```hcl
+alert_thresholds = {
+  alert_disk_threshold = "90"   # по умолчанию 85%
+  alert_cpu_for        = "15m"  # по умолчанию 10m
+}
+```
+
+Доставка — Telegram; пока `telegram_bot_token` пустой, алерты считаются и видны в UI, но никуда не уходят:
+
+```hcl
+telegram_bot_token = "123456:ABC..."
+telegram_chat_id   = "987654321"
+```
+
+Совсем выключить правила — `alerts_enabled = false`.
+
+### 📊 Дашборды
+
+Grafana получает Prometheus-датасорс и папку `Homelab` через provisioning — руками ничего подключать не надо.
+
+**Добавить дашборд с grafana.com** (способ «как надо», остаётся в IaC). На странице дашборда — например <https://grafana.com/grafana/dashboards/1860> — берётся его ID и номер ревизии, и добавляется в `grafana_dashboards` в `terraform.tfvars`:
+
+```hcl
+grafana_dashboards = [
+  { name = "node-exporter-full",  gnet_id = 1860, revision = 37 },
+  { name = "prometheus-overview", gnet_id = 3662, revision = 2 },
+  { name = "alertmanager",        gnet_id = 9578, revision = 4 },
+]
+```
+
+`tofu apply` — JSON скачивается в `/var/lib/grafana/dashboards/<name>.json`, плейсхолдер датасорса в нём подменяется на провиженный Prometheus, Grafana перезапускается и дашборд появляется в папке `Homelab`. Удалили строку → `apply` → дашборд убирается из списка (сам файл при этом остаётся на диске, если он больше не нужен — снести вручную).
+
+**Свой дашборд.** Собрать в UI → `Share → Export → Save to file` → положить JSON рядом и раскатывать копированием, либо (проще) оставить его жить в UI: у провижининга стоит `allowUiUpdates: true`, так что править провиженные дашборды и создавать новые через интерфейс можно. Но созданное в UI живёт только в базе Grafana на ВМ и пропадёт при пересоздании ВМ — в отличие от того, что описано в `grafana_dashboards`.
+
+> Ревизия пришпилена намеренно: обновление дашборда автором не поменяет ваш борд молча. Хотите новее — поднимите `revision` (у Node Exporter Full актуальная — 45).
+
+### Запуск
+
+```bash
+cd envs/pve-monitoring
+cp terraform.tfvars.example terraform.tfvars   # токен API, пароль Grafana, список устройств
+tofu init
+tofu plan
+tofu apply
+```
+
+### Заметки
+
+- **Зарезервировать MAC на роутере** (как для k3s) — иначе ВМ попадает в ограниченный профиль без WAN и установка падает на скачивании.
+- `192.168.1.40` должен быть свободен и вне DHCP-пула.
+- Cloud-image (`noble-server-cloudimg-amd64.img`) уже качает `envs/pve-k3s`, поэтому здесь стоит `download_image = false` — окружение просто использует готовый файл. Если разворачивать мониторинг на ноде без k3s, поставить `true`.
+- `qemu_agent_enabled` — та же логика, что у k3s: на первом apply `false`, потом `true` + перезагрузка ВМ.
+- **Grafana Labs отдаёт 403 на российские IP** (`apt.grafana.com`, `dl.grafana.com`). Если ВМ ходит в интернет напрямую, задача `Fetch the Grafana apt signing key` падает с `HTTP Error 403: Access Denied` — нужен обход у ВМ (весь остальной стек ставится с GitHub и блокировкой не задет).
+- Версии компонентов пришпилены переменными модуля (`prometheus_version`, `alertmanager_version`, `node_exporter_version`, `grafana_version`). Бинарь переустанавливается, только если версия на диске реально отличается.
+- Ретеншн метрик — `prometheus_retention_time` (по умолчанию 30 дней); увеличивая его, увеличивайте и `disk_size`.
+- Правки в роли `monitoring` → повторный `tofu apply` перезапускает Ansible **без** пересоздания ВМ.

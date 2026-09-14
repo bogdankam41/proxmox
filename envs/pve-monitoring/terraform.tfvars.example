@@ -1,0 +1,77 @@
+# Copy to terraform.tfvars and fill in real values. terraform.tfvars is gitignored.
+# Node: pve (home) — monitoring VM 192.168.1.40 (Grafana :3000, Prometheus :9090, Alertmanager :9093)
+
+# Proxmox API token: user part in proxmox_user, secret in proxmox_password.
+proxmox_user     = "terraform@pve!terraform"
+proxmox_password = "REPLACE_WITH_API_TOKEN_SECRET"
+
+# Private key that can log into the cloud-init user on the VM.
+ssh_key_path = "~/.ssh/private-key-ed25519"
+
+# Grafana admin credentials.
+grafana_admin_user     = "admin"
+grafana_admin_password = "REPLACE_WITH_GRAFANA_PASSWORD"
+
+# How long metrics are kept (watch disk_size in main.tf).
+prometheus_retention_time = "30d"
+
+# ---------------------------------------------------------------------------
+# Devices to monitor. THIS is the list you edit when a new device appears —
+# add an entry, run `tofu apply`, done. No .tf file or template is touched.
+#
+#   name    — label shown in Grafana and in alerts
+#   address — host:port of the exporter (node_exporter listens on 9100)
+#   job     — optional; defaults to "node" (plain node_exporter hosts)
+#   labels  — optional extra labels
+#
+# A Linux device first needs the exporter installed:
+#   ansible-playbook -i '192.168.1.50,' -u ubuntu --private-key ~/.ssh/private-key-ed25519 \
+#     -b ../../ansible/node_exporter.yml
+# ---------------------------------------------------------------------------
+monitoring_targets = [
+  {
+    name    = "pve"
+    address = "192.168.1.10:9100"
+    labels  = { role = "hypervisor" }
+  },
+  {
+    name    = "k3s-master"
+    address = "192.168.1.30:9100"
+    labels  = { role = "k3s" }
+  },
+  {
+    name    = "k3s-worker-1"
+    address = "192.168.1.31:9100"
+    labels  = { role = "k3s" }
+  },
+  {
+    name    = "k3s-worker-2"
+    address = "192.168.1.32:9100"
+    labels  = { role = "k3s" }
+  },
+  # A device with its own exporter goes into its own job:
+  # {
+  #   name    = "adguard"
+  #   address = "192.168.1.2:9617"
+  #   job     = "adguard"
+  # },
+]
+
+# Dashboards pulled from grafana.com into the "Homelab" folder.
+# gnet_id / revision are the numbers from https://grafana.com/grafana/dashboards/<id>.
+grafana_dashboards = [
+  { name = "node-exporter-full", gnet_id = 1860, revision = 37 },
+  # { name = "prometheus-overview", gnet_id = 3662, revision = 2 },
+  # { name = "alertmanager",        gnet_id = 9578, revision = 4 },
+]
+
+# Alerting. Leave the Telegram fields empty to keep alerts in the UI only.
+alerts_enabled     = true
+telegram_bot_token = ""
+telegram_chat_id   = ""
+
+# Optional threshold overrides (defaults: 90% CPU/RAM, 85% disk).
+# alert_thresholds = {
+#   alert_disk_threshold = "90"
+#   alert_cpu_for        = "15m"
+# }
