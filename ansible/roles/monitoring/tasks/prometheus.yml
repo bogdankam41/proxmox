@@ -1,0 +1,126 @@
+---
+- name: Create the prometheus system user
+  ansible.builtin.user:
+    name: prometheus
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+
+- name: Create the Prometheus directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: prometheus
+    group: prometheus
+    mode: '0755'
+  loop:
+    - /etc/prometheus
+    - /etc/prometheus/rules
+    - /etc/prometheus/targets
+    - /var/lib/prometheus
+
+- name: Check the installed Prometheus version
+  ansible.builtin.command: /usr/local/bin/prometheus --version
+  register: prometheus_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install Prometheus {{ prometheus_version }}
+  when: prometheus_version not in (prometheus_installed.stdout | default('') ~ prometheus_installed.stderr | default(''))
+  block:
+    - name: Download and unpack the Prometheus release
+      ansible.builtin.unarchive:
+        src: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+        dest: /opt/
+        remote_src: yes
+      register: prometheus_download
+      until: prometheus_download is succeeded
+      retries: 5
+      delay: 10
+
+    - name: Put the Prometheus binaries in place
+      ansible.builtin.copy:
+        src: "/opt/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        remote_src: yes
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - prometheus
+        - promtool
+      notify: restart prometheus
+
+# --- Devices to scrape ---------------------------------------------------
+# monitoring_targets comes straight from terraform.tfvars. Terraform sends the
+# optional fields as null, so the jobs are collected defensively here and the
+# per-target defaults are applied in the templates.
+- name: Collect the scrape jobs in use
+  ansible.builtin.set_fact:
+    monitoring_jobs: >-
+      {{ ([monitoring_default_job]
+          + (monitoring_targets | selectattr('job', 'defined') | map(attribute='job') | select | list))
+         | unique | sort }}
+
+# One file_sd file per job: adding a device to an existing job is picked up by
+# Prometheus on its own, without a reload.
+- name: Write the file_sd target lists
+  ansible.builtin.template:
+    src: targets.json.j2
+    dest: "/etc/prometheus/targets/{{ item }}.json"
+    owner: prometheus
+    group: prometheus
+    mode: '0644'
+  loop: "{{ monitoring_jobs }}"
+  vars:
+    job_name: "{{ item }}"
+
+- name: Find leftover target files
+  ansible.builtin.find:
+    paths: /etc/prometheus/targets
+    patterns: '*.json'
+  register: prometheus_target_files
+
+- name: Drop target files of jobs that no longer exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ prometheus_target_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: (item.path | basename | splitext | first) not in monitoring_jobs
+  notify: reload prometheus
+
+- name: Deploy the alerting rules
+  ansible.builtin.template:
+    src: alert_rules.yml.j2
+    dest: /etc/prometheus/rules/homelab.yml
+    owner: prometheus
+    group: prometheus
+    mode: '0644'
+    validate: /usr/local/bin/promtool check rules %s
+  notify: reload prometheus
+
+- name: Deploy prometheus.yml
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: /etc/prometheus/prometheus.yml
+    owner: prometheus
+    group: prometheus
+    mode: '0644'
+    validate: /usr/local/bin/promtool check config %s
+  notify: reload prometheus
+
+- name: Install the Prometheus systemd unit
+  ansible.builtin.template:
+    src: prometheus.service.j2
+    dest: /etc/systemd/system/prometheus.service
+    mode: '0644'
+  notify: restart prometheus
+
+- name: Ensure Prometheus is started and enabled
+  ansible.builtin.systemd:
+    name: prometheus
+    state: started
+    enabled: yes
+    daemon_reload: yes

@@ -1,0 +1,31 @@
+---
+# Prometheus and Alertmanager reload their config on SIGHUP — no scrape gap.
+- name: reload prometheus
+  ansible.builtin.systemd:
+    name: prometheus
+    state: reloaded
+  failed_when: false
+
+- name: restart prometheus
+  ansible.builtin.systemd:
+    name: prometheus
+    state: restarted
+    daemon_reload: yes
+
+- name: reload alertmanager
+  ansible.builtin.systemd:
+    name: alertmanager
+    state: reloaded
+  failed_when: false
+
+- name: restart alertmanager
+  ansible.builtin.systemd:
+    name: alertmanager
+    state: restarted
+    daemon_reload: yes
+
+- name: restart grafana
+  ansible.builtin.systemd:
+    name: grafana-server
+    state: restarted
+    daemon_reload: yes

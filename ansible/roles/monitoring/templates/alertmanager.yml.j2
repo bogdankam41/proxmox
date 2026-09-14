@@ -1,0 +1,36 @@
+# Managed by Ansible (roles/monitoring) — do not edit by hand.
+global:
+  resolve_timeout: {{ alertmanager_resolve_timeout }}
+
+route:
+  group_by: ['alertname', 'name']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: default
+
+# A critical alert silences the warning-level noise from the same host.
+inhibit_rules:
+  - source_matchers: ['severity = critical']
+    target_matchers: ['severity = warning']
+    equal: ['instance']
+
+receivers:
+  - name: default
+{% if alertmanager_telegram_bot_token | length > 0 and alertmanager_telegram_chat_id | string | length > 0 %}
+    telegram_configs:
+      - bot_token: '{{ alertmanager_telegram_bot_token }}'
+        chat_id: {{ alertmanager_telegram_chat_id }}
+        parse_mode: HTML
+        send_resolved: true
+        message: |-{% raw %}
+          {{ if eq .Status "firing" }}🔥{{ else }}✅{{ end }} <b>{{ .Status | toUpper }}</b> {{ .CommonLabels.alertname }}
+          {{ range .Alerts }}{{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}{% endraw %}
+
+{% else %}
+    # No delivery configured: alerts are still evaluated and visible in the
+    # Alertmanager/Prometheus UI. Set alertmanager_telegram_* in terraform.tfvars
+    # to have them pushed to Telegram.
+{% endif %}

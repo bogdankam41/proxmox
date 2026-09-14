@@ -1,0 +1,9 @@
+---
+# Standalone: install node_exporter on hosts that should be scraped.
+# Run it by hand against any device you add to monitoring_targets, e.g.
+#   ansible-playbook -i '192.168.1.50,' -u ubuntu --private-key ~/.ssh/key -b ansible/node_exporter.yml
+- name: Install node_exporter on monitored hosts
+  hosts: all
+  become: yes
+  roles:
+    - node_exporter

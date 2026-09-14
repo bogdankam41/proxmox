@@ -1,0 +1,8 @@
+---
+# Configures the monitoring VM created by modules/monitoring_vm.
+# Terraform passes the device list and versions in as extra vars.
+- name: Deploy the monitoring stack (Prometheus + Alertmanager + Grafana)
+  hosts: all
+  become: yes
+  roles:
+    - monitoring

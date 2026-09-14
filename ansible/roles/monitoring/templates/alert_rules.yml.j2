@@ -1,0 +1,50 @@
+# Managed by Ansible (roles/monitoring) — do not edit by hand.
+# Thresholds are variables (alert_* in roles/monitoring/defaults/main.yml),
+# overridable from terraform.tfvars.
+{% if not monitoring_alerts_enabled %}
+groups: []
+{% else %}
+groups:
+  - name: homelab.availability
+    rules:
+      - alert: InstanceDown
+        expr: up == 0
+        for: {{ alert_instance_down_for }}
+        labels:
+          severity: critical
+        annotations:{% raw %}
+          summary: '{{ $labels.name }} is down'
+          description: 'Prometheus cannot scrape {{ $labels.instance }} (job {{ $labels.job }}).'{% endraw %}
+
+  - name: homelab.resources
+    rules:
+      - alert: HighCpuUsage
+        expr: 100 - (avg by (instance, name, job) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > {{ alert_cpu_threshold }}
+        for: {{ alert_cpu_for }}
+        labels:
+          severity: warning
+          threshold: "{{ alert_cpu_threshold }}"
+        annotations:{% raw %}
+          summary: 'High CPU on {{ $labels.name }}'
+          description: 'CPU usage is {{ printf "%.0f" $value }}% on {{ $labels.instance }}.'{% endraw %}
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > {{ alert_memory_threshold }}
+        for: {{ alert_memory_for }}
+        labels:
+          severity: warning
+          threshold: "{{ alert_memory_threshold }}"
+        annotations:{% raw %}
+          summary: 'High memory usage on {{ $labels.name }}'
+          description: 'Memory usage is {{ printf "%.0f" $value }}% on {{ $labels.instance }}.'{% endraw %}
+
+      - alert: LowDiskSpace
+        expr: (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|squashfs|overlay|ramfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|squashfs|overlay|ramfs"})) * 100 > {{ alert_disk_threshold }}
+        for: {{ alert_disk_for }}
+        labels:
+          severity: warning
+          threshold: "{{ alert_disk_threshold }}"
+        annotations:{% raw %}
+          summary: 'Low disk space on {{ $labels.name }}'
+          description: '{{ $labels.mountpoint }} is {{ printf "%.0f" $value }}% full on {{ $labels.instance }}.'{% endraw %}
+{% endif %}

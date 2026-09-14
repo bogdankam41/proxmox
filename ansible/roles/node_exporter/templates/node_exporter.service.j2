@@ -1,0 +1,19 @@
+# Managed by Ansible (roles/node_exporter) — do not edit by hand.
+[Unit]
+Description=Prometheus node_exporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ node_exporter_user }}
+Group={{ node_exporter_user }}
+ExecStart=/usr/local/bin/node_exporter --web.listen-address={{ node_exporter_listen_address }}
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

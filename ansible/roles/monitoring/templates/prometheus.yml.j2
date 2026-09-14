@@ -1,0 +1,49 @@
+# Managed by Ansible (roles/monitoring) — do not edit by hand.
+# Devices are defined in envs/<env>/terraform.tfvars (monitoring_targets).
+global:
+  scrape_interval: {{ prometheus_scrape_interval }}
+  evaluation_interval: {{ prometheus_evaluation_interval }}
+{% if prometheus_external_labels %}
+  external_labels:
+{% for key, value in prometheus_external_labels | dictsort %}
+    {{ key }}: "{{ value }}"
+{% endfor %}
+{% endif %}
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - localhost:9093
+
+scrape_configs:
+  # The stack watching itself.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          name: prometheus
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["localhost:9093"]
+        labels:
+          name: alertmanager
+
+  - job_name: grafana
+    static_configs:
+      - targets: ["localhost:{{ grafana_listen_port }}"]
+        labels:
+          name: grafana
+
+  # Device jobs. Targets live in their own file_sd file, so adding a device to
+  # an existing job is picked up by Prometheus without a reload.
+{% for job in monitoring_jobs %}
+  - job_name: {{ job }}
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/{{ job }}.json
+{% endfor %}

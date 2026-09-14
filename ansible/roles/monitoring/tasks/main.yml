@@ -1,0 +1,64 @@
+---
+# The VM has no global IPv6, but many hosts resolve to AAAA too; getaddrinfo
+# would prefer IPv6 and apt/curl hang. Same fix as the AdGuard LXC / k3s nodes.
+- name: Prefer IPv4 in getaddrinfo (gai.conf)
+  ansible.builtin.copy:
+    content: "precedence ::ffff:0:0/96  100\n"
+    dest: /etc/gai.conf
+    mode: '0644'
+
+- name: Force apt to use IPv4
+  ansible.builtin.copy:
+    content: "Acquire::ForceIPv4 \"true\";\n"
+    dest: /etc/apt/apt.conf.d/99force-ipv4
+    mode: '0644'
+
+- name: Wait for outbound DNS/network readiness
+  ansible.builtin.command: getent hosts github.com
+  register: dns_ready
+  until: dns_ready.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - tar
+      - gpg
+      - apt-transport-https
+      - qemu-guest-agent
+    state: present
+    update_cache: yes
+  register: apt_base
+  until: apt_base is succeeded
+  retries: 5
+  delay: 10
+
+# The unit is bound to the virtio channel Proxmox only attaches when the VM has
+# agent=1 (module var qemu_agent_enabled). Without it, starting the service fails.
+- name: Check for the QEMU guest-agent virtio channel
+  ansible.builtin.stat:
+    path: /dev/virtio-ports/org.qemu.guest_agent.0
+  register: qga_channel
+
+- name: Enable qemu-guest-agent
+  ansible.builtin.systemd:
+    name: qemu-guest-agent
+    enabled: yes
+    state: "{{ 'started' if qga_channel.stat.exists else omit }}"
+
+# Included (not a meta dependency) so it runs after the network fixes above.
+- name: Install node_exporter on the monitoring host itself
+  ansible.builtin.include_role:
+    name: node_exporter
+
+- name: Install and configure Prometheus
+  ansible.builtin.include_tasks: prometheus.yml
+
+- name: Install and configure Alertmanager
+  ansible.builtin.include_tasks: alertmanager.yml
+
+- name: Install and configure Grafana
+  ansible.builtin.include_tasks: grafana.yml
