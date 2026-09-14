@@ -7,9 +7,10 @@ module "k3s" {
   cluster_name = "k3s"
 
   gateway_ip = "192.168.1.1"
-  # The router resolves reliably right after boot; AdGuard (192.168.1.2) can be
-  # put first here once the cluster is up.
-  dns_servers = ["192.168.1.1"]
+  # AdGuard, now that the cluster is up: node DNS is filtered and shows up in
+  # the AdGuard query log. The router was only the bootstrap resolver, needed
+  # while AdGuard could not yet be relied on during the first boot.
+  dns_servers = ["192.168.1.2"]
 
   # MACs are pinned: a new random MAC lands in the router's restricted profile
   # with no internet, which breaks the k3s install. Reserve these on the router.
