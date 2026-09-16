@@ -39,6 +39,12 @@ alert_memory_threshold: 90
 alert_memory_for: "10m"
 alert_disk_threshold: 85
 alert_disk_for: "15m"
+# Temperature (node_exporter hwmon collector). Only the chips worth alerting on:
+# CPU package/cores and disks. Board/ACPI zones and battery sensors are noisy and
+# report meaningless values on some hardware, so they stay out of the rule.
+alert_temp_threshold: 85
+alert_temp_for: "5m"
+alert_temp_chips: ".*coretemp.*|.*k10temp.*|.*cpu_thermal.*|.*nvme.*|.*drivetemp.*"
 
 # --- Grafana ------------------------------------------------------------
 grafana_listen_port: 3000
@@ -50,3 +56,5 @@ grafana_dashboards:
   - name: node-exporter-full
     gnet_id: 1860
     revision: 37
+# Dashboards kept in this repo (roles/monitoring/files/dashboards/*.json) are
+# provisioned as well — for boards that do not exist on grafana.com.

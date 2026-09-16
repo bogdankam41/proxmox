@@ -49,6 +49,7 @@ proxmox/
 │   ├── roles/k3s_agent/           # воркеры (join по токену мастера)
 │   ├── monitoring.yml             # плейбук стека мониторинга
 │   ├── roles/monitoring/          # Prometheus + Alertmanager + Grafana
+│   │   └── files/dashboards/      # свои дашборды Grafana (температура)
 │   ├── node_exporter.yml          # поставить экспортер на любое устройство
 │   ├── roles/node_exporter/       # node_exporter + systemd-юнит
 │   └── inventory/                 # (gitignored) inventory генерирует Terraform
@@ -210,8 +211,10 @@ kubectl get nodes -o wide
    # k3s-ноды — через inventory, сгенерированный Terraform
    ansible-playbook -i ansible/inventory/k3s.ini ansible/node_exporter.yml
 
-   # нода Proxmox (Debian, вход root)
+   # ноды Proxmox (Debian, вход root); pve-2 — через IPSec-туннель
    ansible-playbook -i '192.168.1.10,' -u root \
+     --private-key ~/.ssh/private-key-ed25519 ansible/node_exporter.yml
+   ansible-playbook -i '192.168.2.10,' -u root \
      --private-key ~/.ssh/private-key-ed25519 ansible/node_exporter.yml
 
    # LXC с AdGuard (вход root)
@@ -251,12 +254,13 @@ kubectl get nodes -o wide
 
 ### 🔔 Алерты
 
-Встроенные правила: `InstanceDown` (цель не отвечает 5 мин), `HighCpuUsage`, `HighMemoryUsage`, `LowDiskSpace`. Пороги правятся из tfvars:
+Встроенные правила: `InstanceDown` (цель не отвечает 5 мин), `HighCpuUsage`, `HighMemoryUsage`, `LowDiskSpace`, `HighTemperature` (см. [🌡️ Температура](#️-температура)). Пороги правятся из tfvars:
 
 ```hcl
 alert_thresholds = {
   alert_disk_threshold = "90"   # по умолчанию 85%
   alert_cpu_for        = "15m"  # по умолчанию 10m
+  alert_temp_threshold = "90"   # по умолчанию 85 °C
 }
 ```
 
@@ -268,6 +272,33 @@ telegram_chat_id   = "987654321"
 ```
 
 Совсем выключить правила — `alerts_enabled = false`.
+
+### 🌡️ Температура
+
+Отдельный экспортер не нужен: коллектор `hwmon` включён в `node_exporter` по умолчанию и читает `/sys/class/hwmon`, то есть всё, для чего в ядре загружен драйвер. Обе ноды — ноутбуки Dell (`pve` — XPS 15 9560, `pve-2` — XPS 13 9365), набор чипов у них одинаковый:
+
+| Чип                       | Что это                                       |
+| ------------------------- | --------------------------------------------- |
+| `platform_coretemp_0`     | Intel CPU: `temp1` — пакет, дальше ядра        |
+| `nvme_nvme0`              | NVMe-накопитель                                |
+| `platform_dell_smm_hwmon` | датчики и **вентиляторы** платы Dell           |
+| `thermal_thermal_zone*`   | ACPI-зоны и чипсет (`pch_skylake`)             |
+
+Метрики: `node_hwmon_temp_celsius{chip,sensor}`, обороты — `node_hwmon_fan_rpm`. Человекочитаемое имя сенсора лежит отдельно, в `node_hwmon_sensor_label` (у `coretemp` `temp1` → `Package id 0`).
+
+Быстрая проверка, что железо вообще отдаёт температуру, — до установки экспортера:
+
+```bash
+ssh root@192.168.1.10 'for d in /sys/class/hwmon/hwmon*; do echo "$d: $(cat $d/name)"; done'
+```
+
+Пусто или только `acpitz` — значит драйвер не загружен: поставьте `lm-sensors`, прогоните `sensors-detect` и допишите нужные модули (`nct6775`, `it87`, `drivetemp` для SATA-дисков) в `/etc/modules`. Ни на `pve`, ни на `pve-2` этого не потребовалось — `coretemp`, `nvme` и `dell_smm` подхватываются сами.
+
+`pve-2` скрейпится **через IPSec-туннель** (`192.168.2.10:9100`, RTT ~3 мс) — наружу порт экспортера открывать не надо, туннель уже несёт LAN второй площадки.
+
+**Дашборд:** «Homelab — температура» (`ansible/roles/monitoring/files/dashboards/homelab-temperature.json`) — максимум по хостам, CPU, диски, все сенсоры, вентиляторы; фильтры по хосту и чипу. Список хостов строится из самих метрик (`label_values(node_hwmon_temp_celsius, name)`), поэтому новая нода с датчиками появляется на дашборде сама, править JSON не нужно. Температура есть и в Node Exporter Full — свёрнутая строка *Hardware Misc*.
+
+**Алерт:** `HighTemperature` — выше `alert_temp_threshold` (85 °C) дольше `alert_temp_for` (5 мин). Правило смотрит только на чипы из `alert_temp_chips` (CPU и диски): ACPI-зоны, батарея и часть датчиков платы на многих машинах врут (у `dell_smm` один сенсор стабильно показывает 0 °C), поэтому в правило они не входят — на дашборде видны все.
 
 ### 📊 Дашборды
 
@@ -285,7 +316,9 @@ grafana_dashboards = [
 
 `tofu apply` — JSON скачивается в `/var/lib/grafana/dashboards/<name>.json`, плейсхолдер датасорса в нём подменяется на провиженный Prometheus, Grafana перезапускается и дашборд появляется в папке `Homelab`. Удалили строку → `apply` → дашборд убирается из списка (сам файл при этом остаётся на диске, если он больше не нужен — снести вручную).
 
-**Свой дашборд.** Собрать в UI → `Share → Export → Save to file` → положить JSON рядом и раскатывать копированием, либо (проще) оставить его жить в UI: у провижининга стоит `allowUiUpdates: true`, так что править провиженные дашборды и создавать новые через интерфейс можно. Но созданное в UI живёт только в базе Grafana на ВМ и пропадёт при пересоздании ВМ — в отличие от того, что описано в `grafana_dashboards`.
+**Свой дашборд в репозитории.** JSON, положенный в `ansible/roles/monitoring/files/dashboards/`, раскатывается сам — так живёт температурный дашборд. Датасорс в файле пишется плейсхолдером `${DS_PROMETHEUS}`, роль подменяет его на провиженный Prometheus при копировании. Собрать такой можно в UI: `Export → Save to file`, затем положить файл в эту папку и сделать `tofu apply`.
+
+**Свой дашборд в UI.** Собрать в UI → `Share → Export → Save to file` → положить JSON рядом и раскатывать копированием, либо (проще) оставить его жить в UI: у провижининга стоит `allowUiUpdates: true`, так что править провиженные дашборды и создавать новые через интерфейс можно. Но созданное в UI живёт только в базе Grafana на ВМ и пропадёт при пересоздании ВМ — в отличие от того, что описано в `grafana_dashboards`.
 
 > Ревизия пришпилена намеренно: обновление дашборда автором не поменяет ваш борд молча. Хотите новее — поднимите `revision` (у Node Exporter Full актуальная — 45).
 
