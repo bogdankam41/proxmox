@@ -120,6 +120,32 @@
     label: "{{ item.name }}"
   notify: restart grafana
 
+# Dashboards that live in this repo (roles/monitoring/files/dashboards). Used for
+# boards grafana.com does not have — e.g. the hwmon temperature one.
+- name: Deploy the repo's own dashboards
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/var/lib/grafana/dashboards/{{ item | basename }}"
+    owner: grafana
+    group: grafana
+    mode: '0644'
+  with_fileglob:
+    - dashboards/*.json
+  loop_control:
+    label: "{{ item | basename }}"
+  notify: restart grafana
+
+- name: Bind the repo's dashboards to the Prometheus datasource
+  ansible.builtin.replace:
+    path: "/var/lib/grafana/dashboards/{{ item | basename }}"
+    regexp: '\$\{DS_[A-Z0-9_ -]+\}'
+    replace: "{{ grafana_datasource_uid }}"
+  with_fileglob:
+    - dashboards/*.json
+  loop_control:
+    label: "{{ item | basename }}"
+  notify: restart grafana
+
 - name: Ensure Grafana is started and enabled
   ansible.builtin.systemd:
     name: grafana-server

@@ -47,4 +47,18 @@ groups:
         annotations:{% raw %}
           summary: 'Low disk space on {{ $labels.name }}'
           description: '{{ $labels.mountpoint }} is {{ printf "%.0f" $value }}% full on {{ $labels.instance }}.'{% endraw %}
+
+  - name: homelab.temperature
+    rules:
+      # hwmon exposes every chip the kernel knows about; alert_temp_chips keeps
+      # the rule on CPU and disk sensors only (see roles/monitoring/defaults).
+      - alert: HighTemperature
+        expr: max by (instance, name, job, chip, sensor) (node_hwmon_temp_celsius{chip=~"{{ alert_temp_chips }}"}) > {{ alert_temp_threshold }}
+        for: {{ alert_temp_for }}
+        labels:
+          severity: warning
+          threshold: "{{ alert_temp_threshold }}"
+        annotations:{% raw %}
+          summary: 'High temperature on {{ $labels.name }}'
+          description: '{{ $labels.chip }}/{{ $labels.sensor }} is {{ printf "%.0f" $value }}°C on {{ $labels.instance }}.'{% endraw %}
 {% endif %}
