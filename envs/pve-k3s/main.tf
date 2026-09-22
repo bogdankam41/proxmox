@@ -20,7 +20,7 @@ module "k3s" {
     vm_id       = 200
     ip          = "192.168.1.30"
     mac_address = "BC:24:11:A0:30:30"
-    memory_mb   = 3072
+    memory_mb   = 4096
   }
 
   workers = [
@@ -29,14 +29,14 @@ module "k3s" {
       vm_id       = 201
       ip          = "192.168.1.31"
       mac_address = "BC:24:11:A0:30:31"
-      memory_mb   = 1536
+      memory_mb   = 4096
     },
     {
       name        = "k3s-worker-2"
       vm_id       = 202
       ip          = "192.168.1.32"
       mac_address = "BC:24:11:A0:30:32"
-      memory_mb   = 1536
+      memory_mb   = 4096
     },
   ]
 

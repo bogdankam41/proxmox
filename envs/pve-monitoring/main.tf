@@ -17,7 +17,7 @@ module "monitoring" {
   dns_servers = ["192.168.1.2"]
 
   cpu_cores = 2
-  memory_mb = 2048
+  memory_mb = 3072
   # TSDB lives on this disk — keep it in step with prometheus_retention_time.
   disk_size = 32
 
